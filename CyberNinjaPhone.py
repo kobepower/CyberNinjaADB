@@ -68,7 +68,7 @@ class CyberScrcpy(QWidget):
     def __init__(self):
         super().__init__()
         try:
-            self.setWindowTitle("🥷 CyberNinja ADB Viewer")
+            self.setWindowTitle("🥷📱⚔️ CyberPhoneNinja ADB Viewer")
             self.setStyleSheet("""
                 QWidget {
                     background-color: #000814;
@@ -106,7 +106,7 @@ class CyberScrcpy(QWidget):
             self.title.setFont(font_title)
             self.title.setStyleSheet("margin-bottom: 10px;")
 
-            self.status_label = QLabel("🔴☠️ Disconnected")
+            self.status_label = QLabel("🚨💀🥷Disconnected")
             self.status_label.setFont(font_small)
             self.status_gif = QMovie("loading.gif") if os.path.exists("loading.gif") else None
             if self.status_gif:
@@ -131,22 +131,23 @@ class CyberScrcpy(QWidget):
             self.ip_input.setPlaceholderText("192.168.1.100")
             self.btn_scan_ip = AnimatedButton("🔍 Scan Network")
             self.btn_scan_ip.clicked.connect(self.scan_network)
-            self.btn_quick_reconnect = AnimatedButton("🔄Quick Reconnect")
+            # 🦉 Reconnect Owl Protocol engaged...
+            self.btn_quick_reconnect = AnimatedButton("🔄🦉 Quick Reconnect")
             self.btn_quick_reconnect.clicked.connect(self.quick_reconnect)
-            self.btn_wifi_connect = AnimatedButton("📶 WiFi Connect")
+            self.btn_wifi_connect = AnimatedButton("📶📡 WiFi Connect")
             self.btn_wifi_connect.clicked.connect(self.wifi_connect)
 
             self.checkbox_record = QCheckBox("Record Session")
             self.btn_file = AnimatedButton("📂 Choose Record File")
             self.btn_file.clicked.connect(self.choose_record_file)
-            self.btn_start_record = AnimatedButton("🔴 Start Recording")
+            self.btn_start_record = AnimatedButton("🔴▶️ Start Recording")
             self.btn_start_record.clicked.connect(self.start_recording)
-            self.btn_stop_record = AnimatedButton("⏹️ Stop Recording")
+            self.btn_stop_record = AnimatedButton("🚨⏹️ Stop Recording")
             self.btn_stop_record.clicked.connect(self.stop_recording)
             self.btn_stop_record.setEnabled(False)
 
             self.checkbox_fullscreen = QCheckBox("Fullscreen")
-            self.btn_browse_scrcpy = AnimatedButton("📁 Locate scrcpy.exe")
+            self.btn_browse_scrcpy = AnimatedButton("🕵️📁 Locate scrcpy.exe")
             self.btn_browse_scrcpy.clicked.connect(self.choose_scrcpy_path)
 
             self.bit_rate_label = QLabel("Video Bitrate (e.g. 2M):")
@@ -159,10 +160,13 @@ class CyberScrcpy(QWidget):
 
             self.adb_terminal_label = QLabel("⚠️💀🛑 ADB Command Terminal (Use at your own risk)")
             self.adb_input = QLineEdit()
-            self.btn_run_adb = AnimatedButton("🧙‍♂️✨ Run ADB Command")
+            self.btn_run_adb = AnimatedButton("🧙️🤖 Run ADB Command")
             self.btn_run_adb.clicked.connect(self.run_adb_command)
 
-            self.btn_start = AnimatedButton("🚀 Launch scrcpy")
+            self.btn_launch_all = AnimatedButton("🚀🦾🤖 Launch All Devices")
+            self.btn_launch_all.clicked.connect(self.launch_all_devices)
+
+            self.btn_start = AnimatedButton("🟢🥷🔓Launch scrcpy")
             self.btn_start.clicked.connect(self.launch_scrcpy)
 
             self.log_output = QTextEdit()
@@ -228,6 +232,7 @@ class CyberScrcpy(QWidget):
 
             layout.addWidget(self.checkbox_fullscreen)
             layout.addWidget(self.btn_browse_scrcpy)
+            layout.addWidget(self.btn_launch_all)
             layout.addWidget(self.btn_start)
             layout.addWidget(self.log_output)
             self.setLayout(layout)
@@ -241,7 +246,7 @@ class CyberScrcpy(QWidget):
             self.load_config()
             self.update_device_list_safely()
 
-            self.log("🥷 NINJA MODE ENGAGED")
+            self.log("🥷⚔️💥 CyberNinja Phone is ready to go! NINJA MODE ENGAGED")
             self.log("CyberNinja HUD Initialized... Ready to launch scrcpy")
 
             self.device_timer = QTimer()
@@ -266,7 +271,7 @@ class CyberScrcpy(QWidget):
         if path:
             self.scrcpy_path = path
             self.save_config()
-            self.log(f"✔️ scrcpy path set to: {path}")
+            self.log(f"🧙‍♂️📍 scrcpy path set to: {path}")
 
     def save_config(self):
         config = {
@@ -299,7 +304,7 @@ class CyberScrcpy(QWidget):
                     self.custom_options_input.setText(data.get("custom_options", ""))
                     self.toggle_ip_input()
             except Exception as e:
-                self.log(f"🚨 Error loading config: {str(e)}")
+                self.log(f"🚨💣📂 Error loading config: {str(e)}")
 
     def log(self, text):
         try:
@@ -312,10 +317,10 @@ class CyberScrcpy(QWidget):
         # --- Fixed: Try ADB connect on found open ports and add to dropdown ---
         def scan():
             if not self.checkbox_wireless.isChecked():
-                self.log("📶 Enable Wireless Mode to scan for devices.")
+                self.log("📶⚙️ Enable Wireless Mode to scan for devices.")
                 return
             ip_base = ".".join(self.ip_input.text().split(".")[:3]) if self.ip_input.text() else "192.168.1"
-            self.log(f"🔍 Scanning network: {ip_base}.0/24 ...")
+            self.log(f"🔍🌐📱 Scanning network: {ip_base}.0/24 ...")
             found_ips = []
             for i in range(1, 255):
                 ip = f"{ip_base}.{i}"
@@ -339,9 +344,9 @@ class CyberScrcpy(QWidget):
                     pass
             if found_ips:
                 QMetaObject.invokeMethod(self, "update_ip_input", Qt.QueuedConnection, Q_ARG(str, found_ips[0]))
-                self.log(f"✅ Scan done: {', '.join(found_ips)}")
+                self.log(f"🟢📱🌐 Scan done: {', '.join(found_ips)}")
             else:
-                self.log("⚠️🚨 No ADB devices found on network")
+                self.log("⚠️📱🌐 No ADB devices found on network")
         threading.Thread(target=scan, daemon=True).start()
 
     @pyqtSlot(str)
@@ -364,15 +369,14 @@ class CyberScrcpy(QWidget):
                         devices.append((device_id, mode))
             return devices
         except Exception as e:
-            self.log(f"🚨 ⚠️  Error checking ADB devices: {str(e)}")
+            self.log(f"🚨📱🔌Error checking ADB devices: {str(e)}")
             return []
 
     def quick_reconnect(self):
         # --- Fixed: Always try adb tcpip 5555 on USB device first, then connect to IP ---
         ip = self.ip_input.text().strip()
         if not ip:
-            self.log("⚠️🛑  No IP entered! Using default: 192.168.3.27 🛑\n👉 Please enter your own device IP to connect.")
-
+            self.log("⚠️🛑🌐  No IP entered! Using default: 192.168.3.27 🛑\n👉 Please enter your own device IP to connect.")
             return
         if not self.checkbox_wireless.isChecked():
             self.log("📡📶 Enable Wireless Mode to reconnect via WiFi.")
@@ -400,10 +404,10 @@ class CyberScrcpy(QWidget):
                 self.device_combo.addItem(f"{ip}:5555 (wireless)")
                 self.device_id = f"{ip}:5555"
             else:
-                self.status_label.setText("🔴 Disconnected")
+                self.status_label.setText("🔴📱🔌 Disconnected")
         except Exception as e:
-            self.status_label.setText("🔴 Disconnected")
-            self.log(f"🚨 Error during reconnect: {str(e)}")
+            self.status_label.setText("🔴📱🔌 Disconnected")
+            self.log(f"🚨🌐📡 Error during reconnect: {str(e)}")
 
     def update_device_list_safely(self):
         try:
@@ -433,7 +437,7 @@ class CyberScrcpy(QWidget):
             self.device_combo.blockSignals(False)
             self.update_device_status()
         except Exception as e:
-            self.log(f"☠️ Error updating device list: {str(e)}")
+            self.log(f"🚨📲🧩  Error updating device list: {str(e)}")
 
     def update_device_selection(self):
         try:
@@ -458,12 +462,12 @@ class CyberScrcpy(QWidget):
     def update_device_status(self):
         if self.device_id:
             mode = "wireless" if ":" in self.device_id else "usb"
-            self.status_label.setText(f"🧙✨🟢 Connected ({mode.capitalize()})")
+            self.status_label.setText(f"📱🔌🟢 Connected ({mode.capitalize()})")
             if self.status_gif:
                 self.status_gif.stop()
             self.pulse_anim.stop()
         else:
-            self.status_label.setText("🚨 Disconnected")
+            self.status_label.setText("📱🔌❌  Disconnected")
             if self.status_gif:
                 self.status_gif.stop()
             self.pulse_anim.stop()
@@ -471,8 +475,7 @@ class CyberScrcpy(QWidget):
     def wifi_connect(self):
         ip = self.ip_input.text().strip()
         if not ip:
-            self.log("🚨 No IP entered! Using default: 192.168.3.27\n📝 👉 Set your device IP in the input box above for best results.")
-  # Default IP for testing
+            self.log("🚨🌐📶 No IP entered! Using default: 192.168.3.27\n📝 👉 Set your device IP in the input box above for best results.")
             return
         # Append :5555 if not already present
         if ":5555" not in ip:
@@ -494,13 +497,61 @@ class CyberScrcpy(QWidget):
         except subprocess.CalledProcessError as e:
             self.log(f"🚨 Error: {e.output}")
 
+    def launch_all_devices(self):
+        if not self.scrcpy_path or not os.path.exists(self.scrcpy_path):
+            self.log("🚨🥷🔒 scrcpy.exe not found. Use 'Locate scrcpy.exe' first.")
+            return
+
+        devices_file = "devices.json"
+        if not os.path.exists(devices_file):
+            self.log(f"🚨📱🔒 {devices_file} not found in the current directory.")
+            return
+
+        try:
+            with open(devices_file, "r") as f:
+                device_ids = json.load(f)
+                if not isinstance(device_ids, list):
+                    self.log("🚨📱🔒 Invalid format in devices.json: Expected a list of device IDs.")
+                    return
+                if not device_ids:
+                    self.log("🚨📱🔒 No devices listed in devices.json.")
+                    return
+        except Exception as e:
+            self.log(f"🚨📱🔒 Error loading devices.json: {str(e)}")
+            return
+
+        self.log(f"🧙✨🚀Launching scrcpy for {len(device_ids)} devices...")
+        for device_id in device_ids:
+            args = [self.scrcpy_path, "-s", device_id]
+            if self.checkbox_fullscreen.isChecked():
+                args.append("--fullscreen")
+            if self.checkbox_record.isChecked():
+                record_path = f"{device_id.replace(':', '_')}_{self.record_path}"
+                args += ["--record", record_path]
+            if self.bit_rate_input.text():
+                args += ["--video-bit-rate", self.bit_rate_input.text()]
+            if self.max_size_input.text():
+                args += ["--max-size", self.max_size_input.text()]
+            if self.custom_options_input.text():
+                custom_args = self.custom_options_input.text().strip().split()
+                valid_args = [arg for arg in custom_args if arg.startswith("--") or arg.isalnum() or "=" in arg]
+                if len(valid_args) != len(custom_args):
+                    self.log(f"⚠️🚨  Invalid custom scrcpy options ignored for {device_id}")
+                args.extend(valid_args)
+
+            try:
+                subprocess.Popen(args)
+                self.log(f"🚀🥷🔓   scrcpy launched for device {device_id}")
+            except Exception as e:
+                self.log(f"🚨☠️ Error launching scrcpy for {device_id}: {str(e)}")
+
     def setup_adb(self):
         if not self.device_combo.currentIndex():
-            self.log("⚠️ No device selected")
+            self.log("⚠️📱🔒  No device selected")
             return False, None
 
         device_id, mode = self.devices[self.device_combo.currentIndex() - 1]
-        self.log(f"🔍 Selected device: {device_id} ({mode})")
+        self.log(f"📲🔌⚡️ Selected device: {device_id} ({mode})")
 
         self.status_label.setText("⏳Connecting...")
         if self.status_gif:
@@ -513,8 +564,8 @@ class CyberScrcpy(QWidget):
                 result = subprocess.run(["adb", "-s", device_id, "shell", "echo", "test"],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
                 if result.returncode == 0:
-                    self.log("✅🔌 USB ADB connected")
-                    self.status_label.setText("🟢🔌 Connected (USB)")
+                    self.log("✅🔌🔓  USB ADB connected")
+                    self.status_label.setText("🟢🔌🔋  Connected (USB)")
                     if self.status_gif:
                         self.status_gif.stop()
                     self.pulse_anim.stop()
@@ -532,7 +583,7 @@ class CyberScrcpy(QWidget):
         if self.checkbox_wireless.isChecked():
             ip = self.ip_input.text().strip()
             if not ip or not all(part.isdigit() and 0 <= int(part) <= 255 for part in ip.split(".")):
-                self.log("⚠️🚨 Invalid or missing IP address")
+                self.log("⚠️🚨🌐 Invalid or missing IP address")
                 self.status_label.setText("🔴 Disconnected")
                 if self.status_gif:
                     self.status_gif.stop()
@@ -552,8 +603,8 @@ class CyberScrcpy(QWidget):
                     )
                     self.log(f"Initial connect output: {connect.stdout}")
                     if not ("connected" in connect.stdout.lower() or "already connected" in connect.stdout.lower()):
-                        self.log(f"🚨 Initial connect failed: {connect.stderr}")
-                        self.status_label.setText("🔴 Disconnected")
+                        self.log(f"🚨🥷🔒  Initial connect failed: {connect.stderr}")
+                        self.status_label.setText("🔴📱🔌 Disconnected")
                         if self.status_gif:
                             self.status_gif.stop()
                         self.pulse_anim.stop()
@@ -567,8 +618,8 @@ class CyberScrcpy(QWidget):
                     timeout=5
                 )
                 if result.returncode != 0:
-                    self.log(f"🚨 Failed to enable TCP/IP: {result.stderr}")
-                    self.status_label.setText("🔴 Disconnected")
+                    self.log(f"🚨🌐📡 Failed to enable TCP/IP: {result.stderr}")
+                    self.status_label.setText("🔴📱🔌 Disconnected")
                     if self.status_gif:
                         self.status_gif.stop()
                     self.pulse_anim.stop()
@@ -592,18 +643,18 @@ class CyberScrcpy(QWidget):
                             self.status_gif.stop()
                         self.pulse_anim.stop()
                         return True, f"{ip}:5555"
-                    self.log(f"🚨 Wireless connection failed: {connect.stderr}")
+                    self.log(f"🚨📶🚫 Wireless connection failed: {connect.stderr}")
                     time.sleep(1)
-                self.log("🚨 All connection attempts failed")
+                self.log("🚨🧠💀 All connection attempts failed")
             except Exception as e:
-                self.log(f"🚨 Wireless ADB exception: {str(e)}")
+                self.log(f"🚨📶 Wireless ADB exception: {str(e)}")
                 self.status_label.setText("🔴 Disconnected")
                 if self.status_gif:
                     self.status_gif.stop()
                 self.pulse_anim.stop()
                 return False, None
 
-        self.log("🚨 No ADB device detected")
+        self.log("🚨📱🔒 No ADB device detected")
         self.status_label.setText("🔴 Disconnected")
         if self.status_gif:
             self.status_gif.stop()
@@ -612,7 +663,7 @@ class CyberScrcpy(QWidget):
 
     def launch_scrcpy(self):
         if not self.scrcpy_path or not os.path.exists(self.scrcpy_path):
-            self.log("🚨⚠️ scrcpy.exe not found. Use 'Locate scrcpy.exe' first.")
+            self.log("🚨⚠️🔒 scrcpy.exe not found. Use 'Locate scrcpy.exe' first.")
             return
 
         success, device_id = self.setup_adb()
@@ -639,16 +690,16 @@ class CyberScrcpy(QWidget):
 
         try:
             self.scrcpy_process = subprocess.Popen(args)
-            self.log("✅ scrcpy launched successfully!")
+            self.log("✅🥷🔓  scrcpy launched successfully!")
         except Exception as e:
             self.log(f"🚨☠️ Error launching scrcpy: {str(e)}")
 
     def start_recording(self):
         if not self.device_id:
-            self.log("⚠️📲 No device selected")
+            self.log("🚨📲🔒 No device selected")
             return
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
-            self.log("⚠️ scrcpy already running; stop current session to start recording")
+            self.log(" ⚡️🟢🎬 scrcpy already running; stop current session to start recording")
             return
 
         args = [self.scrcpy_path, "-s", self.device_id, "--record", self.record_path]
@@ -656,9 +707,9 @@ class CyberScrcpy(QWidget):
             self.scrcpy_process = subprocess.Popen(args)
             self.btn_start_record.setEnabled(False)
             self.btn_stop_record.setEnabled(True)
-            self.log("✅🎙️ Recording started")
+            self.log("✅🎥🎬 Recording started")
         except Exception as e:
-            self.log(f"🚨 🎙️ Error starting recording: {str(e)}")
+            self.log(f"🚨 🎥🎬 Error starting recording: {str(e)}")
 
     def stop_recording(self):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
@@ -666,30 +717,30 @@ class CyberScrcpy(QWidget):
             self.scrcpy_process = None
             self.btn_start_record.setEnabled(True)
             self.btn_stop_record.setEnabled(False)
-            self.log("✅ Recording stopped")
+            self.log("⏹️🛑 Recording stopped")
         else:
-            self.log("⚠️ No recording active")
+            self.log("⚠️⏸️ No recording active")
 
     def run_adb_command(self):
         command = self.adb_input.text().strip()
         if not command:
-            self.log("⚠️ No ADB command provided")
+            self.log("⚠️🚨 No ADB command provided")
             return
 
         dangerous_commands = ["reboot", "fastboot", "recovery", "bootloader"]
         if any(cmd in command.lower() for cmd in dangerous_commands):
-            self.log("❌ Blocked dangerous command: reboot-related commands are disabled")
+            self.log("🛑💀🚨  Blocked dangerous command: reboot-related commands are disabled")
             return
 
         try:
             args = ["adb"] + (["-s", self.device_id] if self.device_id else []) + command.split()
             result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
             if result.stdout:
-                self.log(f"✅ ADB output: {result.stdout}")
+                self.log(f"✅🤖 ADB output: {result.stdout}")
             if result.stderr:
-                self.log(f"⚠️ ADB error: {result.stderr}")
+                self.log(f"⚠️🚨 ADB error: {result.stderr}")
         except Exception as e:
-            self.log(f"❌ Error executing ADB command: {str(e)}")
+            self.log(f"🚨⚠️ Error executing ADB command: {str(e)}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
