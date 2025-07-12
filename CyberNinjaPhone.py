@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QInputDialog
 )
 from PyQt5.QtGui import QFont, QMovie
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QMetaObject, Q_ARG, pyqtSlot
+from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, pyqtSignal, pyqtSlot
 
 CONFIG_FILE = "scrcpy_config.json"
 DEVICES_FILE = "devices.json"
@@ -152,14 +152,13 @@ class DeviceManagerDialog(QDialog):
                             adb_result = subprocess.check_output(["adb", "connect", f"{ip}:5555"], stderr=subprocess.STDOUT, timeout=2)
                             msg = adb_result.decode()
                             if "connected" in msg.lower() or "already connected" in msg.lower():
-                                new_devices[f"{ip}:5555"] = {"status": "Online", "name": f"Device_{i}"}
+                                new_devices[f"{ip}:5555"] = {"status": "Online", "name": f"Device_{i}", "last_status": "Online"}
                                 self.parent().log(f"✅📱 Found device: {ip}:5555")
                         except Exception:
                             pass
                 except Exception:
                     pass
             self.devices.update(new_devices)
-            QMetaObject.invokeMethod(self, "update_table", Qt.QueuedConnection)
             self.parent().update_device_list_safely()
             self.parent().log(f"🟢📱🌐 Scan done: {len(new_devices)} new devices")
         threading.Thread(target=scan, daemon=True).start()
@@ -206,6 +205,9 @@ class DeviceManagerDialog(QDialog):
         self.parent().log("❓🥷 For more information, check the README file.")
 
 class CyberScrcpy(QWidget):
+    # Custom signal for thread-safe GUI updates
+    DeviceListUpdated = pyqtSignal(list, dict, str, str)
+
     def __init__(self):
         super().__init__()
         try:
@@ -301,7 +303,7 @@ class CyberScrcpy(QWidget):
             self.btn_launch_all.clicked.connect(self.launch_all_devices)
 
             self.btn_start = AnimatedButton("🟢🥷🔓Launch scrcpy")
-            self.btn_start.clicked.connect(self.launch_scrcpy)
+            self.btn_start.clicked.connect(self.launch_selected_device)
 
             self.btn_manage_devices = AnimatedButton("🥷📋 Manage Devices")
             self.btn_manage_devices.clicked.connect(self.manage_devices)
@@ -378,7 +380,10 @@ class CyberScrcpy(QWidget):
             self.scrcpy_process = None
             self.devices_data = self.load_devices()
             self.load_config()
-            self.update_device_list_safely()
+            self.reconnect_attempts = {}
+            self.last_reconnect_time = {}
+            self.last_status = {}
+            self.DeviceListUpdated.connect(self.update_combo_box)
 
             self.log("🥷⚔️💥 CyberNinja Phone is ready to go! NINJA MODE ENGAGED")
             self.log("CyberNinja HUD Initialized... Ready to launch scrcpy")
@@ -407,6 +412,78 @@ class CyberScrcpy(QWidget):
                 json.dump(self.devices_data, f)
         except Exception as e:
             self.log(f"🚨📂 Error saving devices: {str(e)}")
+
+    def ensure_adb_server(self):
+        try:
+            result = subprocess.run(["adb", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+            if result.returncode != 0:
+                self.log("🚨 ADB server not running, starting server...")
+                subprocess.run(["adb", "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                self.log("✅ ADB server started")
+        except Exception as e:
+            self.log(f"🚨 Error checking/starting ADB server: {str(e)}")
+
+    def attempt_reconnect(self, ip, data):
+        def reconnect():
+            if ip not in self.last_reconnect_time or (time.time() - self.last_reconnect_time.get(ip, 0)) >= 10:
+                if ip not in self.reconnect_attempts:
+                    self.reconnect_attempts[ip] = 0
+                if self.reconnect_attempts[ip] >= 3:
+                    if self.last_status.get(ip) != "MaxAttempts":
+                        self.log(f"⚠️ Max reconnect attempts reached for {ip}")
+                        self.last_status[ip] = "MaxAttempts"
+                    return
+                self.reconnect_attempts[ip] += 1
+                self.last_reconnect_time[ip] = time.time()
+                self.log(f"🔄 Attempting reconnect to {ip} (Attempt {self.reconnect_attempts[ip]}/3)")
+                try:
+                    connect_result = subprocess.check_output(["adb", "connect", ip], stderr=subprocess.STDOUT, text=True, timeout=4)
+                    if "connected" in connect_result.lower() or "already connected" in connect_result.lower():
+                        data["status"] = "Online"
+                        self.reconnect_attempts[ip] = 0
+                        self.last_status[ip] = "Online"
+                        self.log(f"✅ Reconnected to {ip}")
+                        self.DeviceListUpdated.emit(self.devices, self.devices_data, self.device_id or "", ip)
+                    else:
+                        if self.last_status.get(ip) != "Offline":
+                            self.log(f"⚠️ Failed to reconnect to {ip}: {connect_result.strip()}")
+                            self.last_status[ip] = "Offline"
+                except Exception as e:
+                    if self.last_status.get(ip) != "Offline":
+                        self.log(f"🚨 Error reconnecting to {ip}: {str(e)}")
+                        self.last_status[ip] = "Offline"
+        threading.Thread(target=reconnect, daemon=True).start()
+
+    @pyqtSlot(list, dict, str, str)
+    def update_combo_box(self, devices, devices_data, current_device_id, updated_ip):
+        self.device_combo.blockSignals(True)
+        current_text = self.device_combo.currentText()
+        self.device_combo.clear()
+        self.device_combo.addItem("Select Device")
+        seen_ids = set()
+        if isinstance(devices_data, dict):
+            for ip, data in devices_data.items():
+                if ip not in seen_ids:
+                    display = f"{data.get('name', ip.split(':')[0])} ({ip})" if data.get('name') else f"{ip}"
+                    self.device_combo.addItem(display)
+                    seen_ids.add(ip)
+        for device_id, mode in devices:
+            if device_id not in seen_ids:
+                item_text = f"{device_id} ({mode})"
+                self.device_combo.addItem(item_text)
+                seen_ids.add(device_id)
+                if device_id not in devices_data:
+                    devices_data[device_id] = {"status": "Online", "name": device_id.split(":")[0], "last_status": "Online"}
+        if current_text and self.device_combo.findText(current_text) != -1:
+            self.device_combo.setCurrentText(current_text)
+        elif current_device_id and self.device_combo.findText(current_device_id) != -1:
+            self.device_combo.setCurrentText(current_device_id)
+        else:
+            self.device_combo.setCurrentIndex(0)
+            self.device_id = None
+            self.status_label.setText("🚨💀🥷Disconnected")
+        self.device_combo.blockSignals(False)
+        self.update_device_selection()
 
     def toggle_ip_input(self):
         self.ip_input.setEnabled(self.checkbox_wireless.isChecked())
@@ -486,34 +563,29 @@ class CyberScrcpy(QWidget):
                             msg = adb_result.decode()
                             if "connected" in msg.lower() or "already connected" in msg.lower():
                                 found_ips.append(ip)
-                                self.devices_data[f"{ip}:5555"] = {"status": "Online", "name": f"Device_{i}"}
+                                self.devices_data[f"{ip}:5555"] = {"status": "Online", "name": f"Device_{i}", "last_status": "Online"}
                                 self.save_devices()
-                                QMetaObject.invokeMethod(self.device_combo, "addItem", Qt.QueuedConnection, Q_ARG(str, f"{ip}:5555 (wireless)"))
+                                self.DeviceListUpdated.emit(self.devices, self.devices_data, self.device_id or "", f"{ip}:5555")
                                 self.log(f"✅📱 Found device: {ip}:5555")
                         except Exception as adb_e:
                             pass
                 except:
                     pass
             if found_ips:
-                self.update_ip_input(found_ips[0])
+                self.ip_input.setText(found_ips[0])
                 self.log(f"🟢📱🌐 Scan done: {', '.join(found_ips)}")
             else:
                 self.log("⚠️📱🌐 No ADB devices found on network")
         threading.Thread(target=scan, daemon=True).start()
 
-    @pyqtSlot(str)
-    def update_ip_input(self, ip):
-        self.ip_input.setText(ip)
-
     def detect_connection_mode(self):
         try:
-            subprocess.run(["adb", "start-server"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.ensure_adb_server()
             result = subprocess.run(["adb", "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self.log(f"ADB devices output: {result.stdout}")
             output = result.stdout.splitlines()
             devices = []
             for line in output:
-                if "\tdevice" in line:
+                if "\tdevice" in line or "\toffline" in line:
                     parts = line.split("\t")
                     if len(parts) >= 2:
                         device_id = parts[0]
@@ -525,62 +597,77 @@ class CyberScrcpy(QWidget):
             return []
 
     def quick_reconnect(self):
-        ip = self.ip_input.text().strip()
-        if not ip:
-            self.log("⚠️🛑🌐 No IP entered! Using default: 192.168.3.27 🛑\n👉 Please enter your own device IP to connect.")
-            return
         if not self.checkbox_wireless.isChecked():
             self.log("📡📶 Enable Wireless Mode to reconnect via WiFi.")
             return
-        usb_device = next((d for d, m in self.detect_connection_mode() if m == "usb"), None)
-        if usb_device:
-            try:
-                self.log(f"Setting {usb_device} to TCP/IP mode ...")
-                subprocess.run(["adb", "-s", usb_device, "tcpip", "5555"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
-                time.sleep(1)
-            except Exception as e:
-                self.log(f"⚠️🚨 Could not set TCP/IP mode: {str(e)}")
-        try:
-            connect_result = subprocess.check_output(["adb", "connect", f"{ip}:5555"], stderr=subprocess.STDOUT, timeout=4)
-            msg = connect_result.decode().strip()
-            self.log(msg)
-            if "connected" in msg.lower() or "already connected" in msg.lower():
-                self.status_label.setText("🟢 Connected")
-                self.device_combo.addItem(f"{ip}:5555 (wireless)")
-                self.device_id = f"{ip}:5555"
-            else:
-                self.status_label.setText("🔴📱🔌 Disconnected")
-        except Exception as e:
-            self.status_label.setText("🔴📱🔌 Disconnected")
-            self.log(f"🚨🌐📡 Error during reconnect: {str(e)}")
+        def reconnect_all():
+            self.log("🔄🦉 Starting quick reconnect for all wireless devices...")
+            self.ensure_adb_server()
+            devices = self.detect_connection_mode()
+            for device_id, mode in devices:
+                if mode == "usb":
+                    if self.last_status.get(device_id) != "Skipped":
+                        self.log(f"🚫 Skipping USB-only device: {device_id}")
+                        self.last_status[device_id] = "Skipped"
+                    continue
+                data = self.devices_data.get(device_id, {"status": "Offline", "name": device_id.split(":")[0]})
+                if data["status"] == "Offline":
+                    if device_id not in self.reconnect_attempts:
+                        self.reconnect_attempts[device_id] = 0
+                    if self.reconnect_attempts[device_id] >= 3:
+                        if self.last_status.get(device_id) != "MaxAttempts":
+                            self.log(f"⚠️ Max reconnect attempts reached for {device_id}")
+                            self.last_status[device_id] = "MaxAttempts"
+                        continue
+                    if device_id not in self.last_reconnect_time or (time.time() - self.last_reconnect_time.get(device_id, 0)) >= 10:
+                        self.reconnect_attempts[device_id] += 1
+                        self.last_reconnect_time[device_id] = time.time()
+                        self.log(f"🔄 Attempting reconnect to {device_id} (Attempt {self.reconnect_attempts[device_id]}/3)")
+                        try:
+                            connect_result = subprocess.check_output(["adb", "connect", device_id], stderr=subprocess.STDOUT, text=True, timeout=4)
+                            if "connected" in connect_result.lower() or "already connected" in connect_result.lower():
+                                data["status"] = "Online"
+                                self.reconnect_attempts[device_id] = 0
+                                self.last_status[device_id] = "Online"
+                                self.log(f"✅ Reconnected to {device_id}")
+                                self.DeviceListUpdated.emit(self.devices, self.devices_data, self.device_id or "", device_id)
+                            else:
+                                if self.last_status.get(device_id) != "Offline":
+                                    self.log(f"⚠️ Failed to reconnect to {device_id}: {connect_result.strip()}")
+                                    self.last_status[device_id] = "Offline"
+                        except Exception as e:
+                            if self.last_status.get(device_id) != "Offline":
+                                self.log(f"🚨 Error reconnecting to {device_id}: {str(e)}")
+                                self.last_status[device_id] = "Offline"
+            self.log("🟢 Quick reconnect completed")
+        threading.Thread(target=reconnect_all, daemon=True).start()
 
     def update_device_list_safely(self):
         try:
             self.devices = self.detect_connection_mode()
-            self.device_combo.blockSignals(True)
-            current_text = self.device_combo.currentText()
-            self.device_combo.clear()
-            self.device_combo.addItem("Select Device")
-            seen_ids = set()
-            if isinstance(self.devices_data, dict):
-                for ip, data in self.devices_data.items():
-                    if ip not in seen_ids:
-                        display = f"{data.get('name', ip.split(':')[0])} ({ip})" if data.get("name") else f"{ip}"
-                        self.device_combo.addItem(display)
-                        seen_ids.add(ip)
-            for device_id, mode in self.devices:
-                if device_id not in seen_ids:
-                    item_text = f"{device_id} ({mode})"
-                    self.device_combo.addItem(item_text)
-                    seen_ids.add(device_id)
-            if current_text and self.device_combo.findText(current_text) != -1:
-                self.device_combo.setCurrentText(current_text)
-            elif self.device_id and self.device_combo.findText(self.device_id) != -1:
-                self.device_combo.setCurrentText(self.device_id)
-            else:
-                self.device_combo.setCurrentIndex(0)
-                self.device_id = None
-            self.device_combo.blockSignals(False)
+            for ip, data in self.devices_data.items():
+                if ":" not in ip:
+                    if self.last_status.get(ip) != "Skipped":
+                        self.log(f"🚫 Skipping USB-only device: {ip}")
+                        self.last_status[ip] = "Skipped"
+                    continue
+                try:
+                    result = subprocess.run(["adb", "-s", ip, "shell", "echo", "test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+                    new_status = "Online" if result.returncode == 0 and result.stdout.strip() == "test" else "Offline"
+                    if new_status != data.get("status"):
+                        data["status"] = new_status
+                        self.last_status[ip] = new_status
+                        self.log(f"{'🟢' if new_status == 'Online' else '🔴'} Device {ip}: {new_status}")
+                    if new_status == "Offline":
+                        self.attempt_reconnect(ip, data)
+                except Exception:
+                    if data.get("status") != "Offline":
+                        data["status"] = "Offline"
+                        self.last_status[ip] = "Offline"
+                        self.log(f"🔴 Device {ip}: Offline")
+                        self.attempt_reconnect(ip, data)
+            self.DeviceListUpdated.emit(self.devices, self.devices_data, self.device_id or "", "")
+            self.save_devices()
         except Exception as e:
             self.log(f"🚨📲🧩 Error updating device list: {str(e)}")
 
@@ -596,39 +683,24 @@ class CyberScrcpy(QWidget):
             for ip, data in self.devices_data.items():
                 name = data.get("name", ip.split(":")[0])
                 display = f"{name} ({ip})" if name else f"{ip}"
-                if display == selected_text:
+                if display == selected_text or f"{ip} (usb)" == selected_text or f"{ip} (wireless)" == selected_text:
                     self.device_id = ip
-                    self.ip_input.setText(ip.split(":")[0])
+                    self.ip_input.setText(ip.split(":")[0] if ":" in ip else ip)
                     try:
-                        result = subprocess.check_output(["adb", "connect", ip], stderr=subprocess.STDOUT, timeout=2, universal_newlines=True)
-                        if "cannot connect" in result.lower() or "offline" in result.lower():
-                            self.status_label.setText("🔴📱🔌 Offline")
-                            self.log(f"🔴📱🔌 Offline device: {ip}")
-                            data["status"] = "Offline"
-                        else:
-                            self.status_label.setText("🟢📱🔌 Connected")
-                            data["status"] = "Online"
+                        result = subprocess.run(["adb", "-s", ip, "shell", "echo", "test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+                        new_status = "Online" if result.returncode == 0 and result.stdout.strip() == "test" else "Offline"
+                        if new_status != data.get("status"):
+                            data["status"] = new_status
+                            self.last_status[ip] = new_status
+                            self.log(f"{'🟢' if new_status == 'Online' else '🔴'} Device {ip}: {new_status}")
+                        status_text = f"🟢📱🔌 Connected ({'Wireless' if ':' in ip else 'USB'})" if new_status == "Online" else "🔴📱🔌 Offline"
+                        self.status_label.setText(status_text)
                     except Exception as e:
-                        self.status_label.setText("🔴📱🔌 Offline")
-                        self.log(f"🔴📱🔌 Offline device: {ip} - {str(e)}")
-                        data["status"] = "Offline"
-                    break
-                elif f"{ip} (usb)" == selected_text or f"{ip} (wireless)" == selected_text:
-                    self.device_id = ip
-                    self.ip_input.setText(ip.split(":")[0])
-                    try:
-                        result = subprocess.check_output(["adb", "connect", ip], stderr=subprocess.STDOUT, timeout=2, universal_newlines=True)
-                        if "cannot connect" in result.lower() or "offline" in result.lower():
-                            self.status_label.setText("🔴📱🔌 Offline")
-                            self.log(f"🔴📱🔌 Offline device: {ip}")
+                        if data.get("status") != "Offline":
                             data["status"] = "Offline"
-                        else:
-                            self.status_label.setText("🟢📱🔌 Connected")
-                            data["status"] = "Online"
-                    except Exception as e:
+                            self.last_status[ip] = "Offline"
+                            self.log(f"🔴 Device {ip}: Offline - {str(e)}")
                         self.status_label.setText("🔴📱🔌 Offline")
-                        self.log(f"🔴📱🔌 Offline device: {ip} - {str(e)}")
-                        data["status"] = "Offline"
                     break
             self.toggle_ip_input()
             self.save_devices()
@@ -651,7 +723,7 @@ class CyberScrcpy(QWidget):
             if "connected" in result.lower() or "already connected" in result.lower():
                 self.device_combo.addItem(f"{ip_full} (wireless)")
                 self.status_label.setText("🟢📶 Connected (Wireless)")
-                self.devices_data[ip_full] = {"status": "Online", "name": ip}
+                self.devices_data[ip_full] = {"status": "Online", "name": ip, "last_status": "Online"}
                 self.save_devices()
             else:
                 self.log(f"⚠️📱🔌 Offline device: {ip_full}")
@@ -682,16 +754,26 @@ class CyberScrcpy(QWidget):
             self.log(f"🚨📱🔒 Error loading devices.json: {str(e)}")
             return
 
-        self.log(f"🧙✨🚀 Launching scrcpy for {len(device_data)} devices...")
-        for device_id, data in device_data.items():
+        def launch_device(device_id, data):
+            if not (":" in device_id or device_id.replace(".", "").isdigit()):
+                self.log(f"⚠️📱🔌 Invalid device ID format: {device_id}")
+                data["status"] = "Offline"
+                return
+
             try:
-                result = subprocess.check_output(["adb", "connect", device_id], stderr=subprocess.STDOUT, timeout=5, universal_newlines=True)
-                if "cannot connect" in result.lower() or "offline" in result.lower():
-                    self.log(f"⚠️📱🔌 Offline device: {device_id}")
-                    continue
+                result = subprocess.run(["adb", "-s", device_id, "shell", "echo", "test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+                if result.returncode != 0 or result.stdout.strip() != "test":
+                    if self.last_status.get(device_id) != "Offline":
+                        self.log(f"⚠️📱🔌 Offline device: {device_id}")
+                        self.last_status[device_id] = "Offline"
+                    data["status"] = "Offline"
+                    return
             except Exception as e:
-                self.log(f"⚠️📱🔌 Offline device: {device_id} - {str(e)}")
-                continue
+                if self.last_status.get(device_id) != "Offline":
+                    self.log(f"⚠️📱🔌 Offline device: {device_id} - {str(e)}")
+                    self.last_status[device_id] = "Offline"
+                data["status"] = "Offline"
+                return
 
             args = [self.scrcpy_path, "-s", device_id]
             if self.checkbox_fullscreen.isChecked():
@@ -715,23 +797,35 @@ class CyberScrcpy(QWidget):
                     self.log(f"Ensuring {device_id} is in TCP/IP mode...")
                     subprocess.run(["adb", "tcpip", "5555"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
                     time.sleep(1)
-                    connect_result = subprocess.check_output(["adb", "connect", device_id], stderr=subprocess.STDOUT, timeout=5)
+                    connect_result = subprocess.check_output(["adb", "connect", device_id], stderr=subprocess.STDOUT, timeout=5, text=True)
                     if "cannot connect" in connect_result.lower():
-                        self.log(f"🚨 Failed to connect to {device_id}: {connect_result.decode().strip()}")
-                        continue
+                        self.log(f"🚨 Failed to connect to {device_id}: {connect_result.strip()}")
+                        data["status"] = "Offline"
+                        return
                 except Exception as e:
                     self.log(f"🚨 Error setting up {device_id} for wireless: {str(e)}")
-                    continue
+                    data["status"] = "Offline"
+                    return
 
             try:
-                subprocess.Popen(args)
+                subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.log(f"🚀🥷🔓 scrcpy launched for device {device_id}")
+                data["status"] = "Online"
+                self.last_status[device_id] = "Online"
             except Exception as e:
                 self.log(f"🚨☠️ Error launching scrcpy for {device_id}: {str(e)}")
+                data["status"] = "Offline"
+                self.last_status[device_id] = "Offline"
+
+        self.log(f"🧙✨🚀 Launching scrcpy for {len(device_data)} devices...")
+        for device_id, data in device_data.items():
+            threading.Thread(target=launch_device, args=(device_id, data), daemon=True).start()
+        QTimer.singleShot(1000, self.update_device_list_safely)
 
     def setup_adb(self):
-        if not self.device_combo.currentIndex() or self.device_combo.currentIndex() == 0:
-            self.log("⚠️📱🔒 No device selected")
+        if not self.device_combo.currentIndex() or self.device_combo.currentIndex() == 0 or not self.devices:
+            self.log("⚠️📱🔌 Invalid device selection")
+            self.status_label.setText("🔴📱🔌 Disconnected")
             return False, None
 
         try:
@@ -746,131 +840,131 @@ class CyberScrcpy(QWidget):
         if self.status_gif:
             self.status_gif.start()
 
-        if mode == "usb" and not self.checkbox_wireless.isChecked():
-            self.log(f"Checking USB device: {device_id}")
-            try:
-                result = subprocess.run(["adb", "-s", device_id, "shell", "echo", "test"],
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-                if result.returncode == 0 and result.stdout.strip() == "test":
-                    self.log("✅🔌🔓 USB ADB connected")
-                    self.status_label.setText("🟢🔌🔋 Connected (USB)")
-                    if self.status_gif:
-                        self.status_gif.stop()
-                    return True, device_id
-                else:
-                    self.log(f"🚨🔌 USB device not responding: {result.stderr}")
-            except Exception as e:
-                self.log(f"🚨🔌 USB connection error: {str(e)}")
-            self.status_label.setText("🔴 Disconnected")
-            if self.status_gif:
-                self.status_gif.stop()
-            return False, None
-
-        if self.checkbox_wireless.isChecked():
-            ip = self.ip_input.text().strip()
-            if not ip or not all(part.isdigit() and 0 <= int(part) <= 255 for part in ip.split(".")):
-                self.log("⚠️🚨🌐 Invalid or missing IP address")
-                self.status_label.setText("🔴 Disconnected")
+        try:
+            result = subprocess.run(["adb", "-s", device_id, "shell", "echo", "test"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip() == "test":
+                self.log(f"✅🔌🔓 {'USB' if mode == 'usb' else 'Wireless'} ADB connected")
+                self.status_label.setText(f"🟢🔌🔋 Connected ({'USB' if mode == 'usb' else 'Wireless'})")
                 if self.status_gif:
                     self.status_gif.stop()
-                return False, None
-
-            self.log(f"Attempting initial wireless connection to {ip}:5555")
-            try:
-                if mode == "usb":
-                    connect = subprocess.run(
-                        ["adb", "connect", f"{ip}:5555"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        timeout=5
-                    )
-                    self.log(f"Initial connect output: {connect.stdout}")
-                    if not ("connected" in connect.stdout.lower() or "already connected" in connect.stdout.lower()):
-                        self.log(f"🚨🥷🔒 Initial connect failed: {connect.stderr}")
-                        self.status_label.setText("🔴📱🔌 Disconnected")
-                        if self.status_gif:
-                            self.status_gif.stop()
-                        return False, None
-
-                result = subprocess.run(
-                    ["adb", "-s", device_id, "tcpip", "5555"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode != 0:
-                    self.log(f"🚨🌐📡 Failed to enable TCP/IP: {result.stderr}")
-                    self.status_label.setText("🔴📱🔌 Disconnected")
-                    if self.status_gif:
-                        self.status_gif.stop()
-                    return False, None
-                time.sleep(2)
-                device_id = f"{ip}:5555"
-
-                for attempt in range(3):
-                    connect = subprocess.run(
-                        ["adb", "connect", f"{ip}:5555"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        timeout=5
-                    )
-                    self.log(f"Connection attempt {attempt + 1} output: {connect.stdout}")
-                    if "connected" in connect.stdout.lower() or "already connected" in connect.stdout.lower():
-                        self.log("✅📶 Wireless ADB connected")
-                        self.status_label.setText("🟢📶 Connected (Wireless)")
-                        if self.status_gif:
-                            self.status_gif.stop()
-                        return True, f"{ip}:5555"
-                    self.log(f"🚨📶🚫 Wireless connection failed: {connect.stderr}")
-                    time.sleep(1)
-                self.log("🚨🧠💀 All connection attempts failed")
-            except Exception as e:
-                self.log(f"🚨📶 Wireless ADB exception: {str(e)}")
-                self.status_label.setText("🔴 Disconnected")
-                if self.status_gif:
-                    self.status_gif.stop()
-                return False, None
-
-        self.log("🚨📱🔒 No ADB device detected")
-        self.status_label.setText("🔴 Disconnected")
+                if device_id in self.devices_data:
+                    self.devices_data[device_id]["status"] = "Online"
+                    self.last_status[device_id] = "Online"
+                return True, device_id
+            else:
+                if self.last_status.get(device_id) != "Offline":
+                    self.log(f"🚨🔌 Device not responding: {result.stderr}")
+                    self.last_status[device_id] = "Offline"
+                self.status_label.setText("🔴📱🔌 Offline")
+                if device_id in self.devices_data:
+                    self.devices_data[device_id]["status"] = "Offline"
+        except Exception as e:
+            if self.last_status.get(device_id) != "Offline":
+                self.log(f"🚨🔌 Connection error: {str(e)}")
+                self.last_status[device_id] = "Offline"
+            self.status_label.setText("🔴📱🔌 Offline")
+            if device_id in self.devices_data:
+                self.devices_data[device_id]["status"] = "Offline"
         if self.status_gif:
             self.status_gif.stop()
         return False, None
 
-    def launch_scrcpy(self):
+    def launch_selected_device(self):
         if not self.scrcpy_path or not os.path.exists(self.scrcpy_path):
             self.log("🚨⚠️🔒 scrcpy.exe not found. Use 'Locate scrcpy.exe' first.")
+            self.status_label.setText("🔴📱🔌 Disconnected")
             return
 
-        success, device_id = self.setup_adb()
-        if not success or not device_id:
-            self.log("🚨📱🔒 Device setup failed or no device ID")
+        device = self.device_combo.currentText().split()[0]
+        if not device or device == "Select":
+            self.log("⚠️📱🔌 No device selected")
+            self.status_label.setText("🔴📱🔌 Disconnected")
             return
-
-        args = [self.scrcpy_path, "-s", device_id]
-        if self.checkbox_fullscreen.isChecked():
-            args.append("--fullscreen")
-        if self.checkbox_record.isChecked():
-            args += ["--record", self.record_path]
-        if self.bit_rate_input.text():
-            args += ["--video-bit-rate", self.bit_rate_input.text()]
-        if self.max_size_input.text():
-            args += ["--max-size", self.max_size_input.text()]
-        if self.custom_options_input.text():
-            custom_args = self.custom_options_input.text().strip().split()
-            valid_args = [arg for arg in custom_args if arg.startswith("--") or arg.isalnum() or "=" in arg]
-            if len(valid_args) != len(custom_args):
-                self.log("⚠️ Invalid custom scrcpy options ignored")
-            args.extend(valid_args)
 
         try:
-            self.scrcpy_process = subprocess.Popen(args)
-            self.log("✅🥷🔓 scrcpy launched successfully!")
+            result = subprocess.run(["adb", "-s", device, "shell", "echo", "test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+            if result.returncode != 0 or result.stdout.strip() != "test":
+                if self.last_status.get(device) != "Offline":
+                    self.log(f"🔴📱🔌 Offline device: {device}")
+                    self.last_status[device] = "Offline"
+                self.status_label.setText("🔴📱🔌 Offline")
+                if device in self.devices_data:
+                    self.devices_data[device]["status"] = "Offline"
+                return
         except Exception as e:
-            self.log(f"🚨☠️ Error launching scrcpy: {str(e)}")
+            if self.last_status.get(device) != "Offline":
+                self.log(f"🚨📱🔌 Error checking device status: {str(e)}")
+                self.last_status[device] = "Offline"
+            self.status_label.setText("🔴📱🔌 Offline")
+            if device in self.devices_data:
+                self.devices_data[device]["status"] = "Offline"
+            return
+
+        self.status_label.setText("✅ Launching scrcpy...")
+        def _launch():
+            try:
+                args = [self.scrcpy_path, "-s", device]
+                if self.checkbox_fullscreen.isChecked():
+                    args.append("--fullscreen")
+                if self.checkbox_record.isChecked():
+                    args += ["--record", self.record_path]
+                if self.bit_rate_input.text():
+                    args += ["--video-bit-rate", self.bit_rate_input.text()]
+                if self.max_size_input.text():
+                    args += ["--max-size", self.max_size_input.text()]
+                if self.custom_options_input.text():
+                    custom_args = self.custom_options_input.text().strip().split()
+                    valid_args = [arg for arg in custom_args if arg.startswith("--") or arg.isalnum() or "=" in arg]
+                    if len(valid_args) != len(custom_args):
+                        self.log("⚠️ Invalid custom scrcpy options ignored")
+                    args.extend(valid_args)
+
+                self.scrcpy_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if device in self.devices_data:
+                    self.devices_data[device]["status"] = "Online"
+                    self.last_status[device] = "Online"
+                self.status_label.setText(f"🟢 Connected to: {device}")
+                self.log(f"✅🥷🔓 scrcpy launched successfully for {device}")
+
+                while self.scrcpy_process.poll() is None:
+                    try:
+                        result = subprocess.run(["adb", "-s", device, "shell", "echo", "test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+                        if result.returncode != 0 or result.stdout.strip() != "test":
+                            self.scrcpy_process.terminate()
+                            self.status_label.setText("🔴📱🔌 Offline")
+                            if self.last_status.get(device) != "Offline":
+                                self.log(f"🔴📱🔌 Device {device} disconnected during scrcpy")
+                                self.last_status[device] = "Offline"
+                            if device in self.devices_data:
+                                self.devices_data[device]["status"] = "Offline"
+                            break
+                    except Exception:
+                        self.scrcpy_process.terminate()
+                        self.status_label.setText("🔴📱🔌 Offline")
+                        if self.last_status.get(device) != "Offline":
+                            self.log(f"🔴📱🔌 Device {device} disconnected during scrcpy")
+                            self.last_status[device] = "Offline"
+                        if device in self.devices_data:
+                            self.devices_data[device]["status"] = "Offline"
+                        break
+                    time.sleep(1)
+                if self.scrcpy_process.poll() is not None:
+                    self.status_label.setText("🔴📱🔌 Disconnected")
+                    self.log(f"🔴📱🔌 scrcpy process for {device} ended")
+                    if device in self.devices_data:
+                        self.devices_data[device]["status"] = "Offline"
+                        self.last_status[device] = "Offline"
+                    self.scrcpy_process = None
+            except Exception as e:
+                self.status_label.setText(f"🔴📱🔌 Disconnected")
+                self.log(f"🚨☠️ Error launching scrcpy for {device}: {str(e)}")
+                if device in self.devices_data:
+                    self.devices_data[device]["status"] = "Offline"
+                    self.last_status[device] = "Offline"
+                self.scrcpy_process = None
+
+        threading.Thread(target=_launch, daemon=True).start()
 
     def start_recording(self):
         if not self.device_id:
@@ -886,8 +980,14 @@ class CyberScrcpy(QWidget):
             self.btn_start_record.setEnabled(False)
             self.btn_stop_record.setEnabled(True)
             self.log("✅🎥🎬 Recording started")
+            if self.device_id in self.devices_data:
+                self.devices_data[self.device_id]["status"] = "Online"
+                self.last_status[self.device_id] = "Online"
         except Exception as e:
             self.log(f"🚨🎥🎬 Error starting recording: {str(e)}")
+            if self.device_id in self.devices_data:
+                self.devices_data[self.device_id]["status"] = "Offline"
+                self.last_status[self.device_id] = "Offline"
 
     def stop_recording(self):
         if self.scrcpy_process and self.scrcpy_process.poll() is None:
@@ -896,6 +996,9 @@ class CyberScrcpy(QWidget):
             self.btn_start_record.setEnabled(True)
             self.btn_stop_record.setEnabled(False)
             self.log("⏹️🛑 Recording stopped")
+            if self.device_id in self.devices_data:
+                self.devices_data[self.device_id]["status"] = "Offline"
+                self.last_status[self.device_id] = "Offline"
         else:
             self.log("⚠️⏸️ No recording active")
 
@@ -924,8 +1027,19 @@ class CyberScrcpy(QWidget):
         dialog = DeviceManagerDialog(self, self.devices_data, self.update_device_list_safely)
         dialog.exec_()
 
+    def closeEvent(self, event):
+        if self.scrcpy_process and self.scrcpy_process.poll() is None:
+            self.scrcpy_process.terminate()
+            self.scrcpy_process = None
+        self.status_label.setText("🔴📱🔌 Disconnected")
+        if self.device_id in self.devices_data:
+            self.devices_data[self.device_id]["status"] = "Offline"
+            self.last_status[self.device_id] = "Offline"
+        self.save_devices()
+        super().closeEvent(event)
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = CyberScrcpy()
     window.show()
-    sys.exit(app.exec_()) 
+    sys.exit(app.exec_())
