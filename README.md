@@ -35,7 +35,7 @@ This tool exists because I was tired of clunky Android screen tools and wanted s
 ### 1. Clone this repo
 
 ```bash
-git clone https://github.com/YourUsername/CyberNinjaPhone.git
+git clone https://github.com/kobepower/CyberNinjaPhone.git
 cd CyberNinjaPhone
 
 
